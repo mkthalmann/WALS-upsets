@@ -1,0 +1,4 @@
+.here
+*.template
+*.tex
+.DS_Store

@@ -1,0 +1,421 @@
+---
+title: "The World Atlas of Language Structures: Visualizing Set Intersections for Constituent Order Parameters"
+subtitle: "On the Limitations of Venn/Euler Diagrams and the Upshot of Up Sets"
+author:
+    - Maik Thalmann^[Georg-August-University Göttingen, maik.thalmann@gmail.com]
+date: "Göttingen; `r format(Sys.time(), '%d %B, %Y')`"
+contact: https://mkthalmann.github.io/home/
+fontsize: 10pt
+output:
+ pdf_document:
+    toc: true
+    pandoc_args: 
+      - "--highlight=tango"
+      - "--top-level-division=section"
+    template: template.template
+    keep_tex: true
+    citation_package: biblatex
+    latex_engine: xelatex
+    dev: cairo_pdf
+bibliography: ../bibliographyuni.bib
+mainfont: "Yrsa Light"
+mainfontoptions: AutoFakeSlant=0.3
+sansfont: "Exo"
+monofont: "Victor Mono"
+mathfont: "Asana Math"
+---
+
+```{r setup, echo = FALSE, warning=FALSE, message = FALSE}
+knitr::opts_chunk$set(
+    echo = TRUE, warning = FALSE, message = FALSE,
+    comment = NA, collapse = TRUE
+)
+
+knitr::opts_chunk$set(
+    fig.path = "figs/", fig.show = "hold", fig.align = "center",
+    fig.asp = 0.618, out.width = "100%", fig.pos = "H", dev = "cairo_pdf"
+)
+
+knitr::opts_chunk$set(tidy = "styler", tidy.opts = list(
+    scope = "tokens", strict = TRUE, indent_by = 4
+))
+```
+
+# Set Up R Environment
+
+Set up some options and load the required packages for the current project. Chiefly among them, since they're the driving forces of the visualizations to come, are *eulerr* [@larsson2020eulerr], *venneuler* [@wilkinson2011venneuler], and *UpSetR* [@gehlenborg2019UpSetR]. 
+
+Additionally, I will set a seed for random number generation. I am not quite positive about this, but suspect that the *eulerr* package used some random factors to compute the set alignments, as I have gotten quite varied results without an explicit seed. 
+
+```{r pkgs}
+options(scipen = 999, width = 130)
+
+packages <- c(
+    # markdown
+    "knitr", "kableExtra",
+    # general
+    "tidyverse", "dlookr", "janitor",
+    # world map
+    "rnaturalearth", "rnaturalearthdata", "sf", "hrbrthemes",
+    # plotting
+    "grid", "UpSetR", "eulerr", "venneuler"
+)
+xfun::pkg_attach(packages, install = TRUE)
+set.seed(1234)
+```
+
+# Data Preparation
+
+
+## Data Import
+
+The data I will work with in the course of this project is from @dryer2013wals (World Atlas of Language Structures, https://wals.info), and I will download the underlying data sets directly from the Github page where they're hosted (https://github.com/cldf-datasets/wals). To reduce computation times, I will subset it right from the very beginning to only focus on same parameters to do with constituent ordering. Note: while we want to check intersections within word order, we will disregard those languages with dual word order patterns (code `81B`) to simplifiy result interpretation.
+
+```{r prep}
+d <- "https://raw.githubusercontent.com/cldf-datasets/wals/master/cldf/values.csv"
+d <- read.csv(d) %>%
+    clean_names() %>%
+    filter(parameter_id %in% c("81A", "87A", "88A", "89A")) %>%
+    select(language_id, parameter_id, value) %>%
+    droplevels()
+
+```
+
+Let's look at what we have so far. The excerpt can be found in Table \ref{tab:data-raw}.
+
+```{r data-raw}
+head(d, 10) %>%
+    kable(
+        booktabs = T,
+        caption = "Raw input data with only the parameters of interest."
+        ) %>%
+        kable_styling(latex_options = "HOLD_position")
+```
+
+## Data Check
+
+Before proceeding, we need to make sure that there's no missing data. Additionally, we need to know what kinds of columms we're working with. Table \ref{tab:check} shows that we have four different parameters, at least one of which has 7 different possible values. 
+
+```{r check}
+diagnose(d) %>%
+    kable(
+        booktabs = T,
+        caption = "Data overview."
+    ) %>%
+        kable_styling(latex_options = "HOLD_position")
+```
+
+## Transforming the Data
+
+### Pivotting
+
+Because of the way that the different plotting methods we'll use later handle data, we need to transform it into wide format. In Table \ref{tab:widen}, you can see the output of this transformation: each parameter is now instantiated in its own column.
+
+```{r widen}
+d <- d %>%
+    pivot_wider(
+        id_cols = "language_id",
+        names_from = "parameter_id",
+        values_from = "value")
+head(d, 10) %>%
+    kable(
+        booktabs = T,
+        caption = "Wide-format data, where each column represents a language feature."
+    ) %>%
+        kable_styling(latex_options = "HOLD_position")
+```
+
+### Renaming
+
+The values might be nicer if they were human-readable, so we'll add them in the next steps. The descriptions are contained in `codes.csv`. The relevant part is displayed in Table \ref{tab:codes}. 
+
+```{r codes}
+codes <- "https://raw.githubusercontent.com/cldf-datasets/wals/master/cldf/codes.csv"
+codes <- read.csv(codes) %>%
+    clean_names() %>%
+    filter(parameter_id %in% c("81A", "87A", "88A", "89A")) %>%
+    select(id, name) %>%
+    pivot_wider(names_from = "id", values_from = "name")
+
+codes %>%
+    kable(
+        booktabs = T,
+        caption = "Parameter code descriptions."
+    ) %>%
+    kable_styling(latex_options = c("scale_down", "HOLD_position"))
+```
+
+Below is the code to rename the parameters and add the descriptions. As the descriptions are very long at times, I opted for manual entry as opposed to simple replacements with the values from Table \ref{tab:codes}. For the outcome, see Table \ref{tab:add-info}.
+
+```{r add-info}
+d <- d %>%
+    rename(
+        word_order = "81A", adj_noun = "87A", dem_noun = "88A", num_noun = "89A"
+    ) %>%
+    mutate(
+        word_order = as.character(word_order),
+        word_order = recode(word_order,
+        "1" = "SOV", "2" = "SVO", "3" = "VSO",
+        "4" = "VOS", "5" = "OVS", "6" = "OSV", "7" = "woNA"),
+        word_order = replace_na(word_order, "woNA"),
+        adj_noun = as.character(adj_noun),
+        adj_noun = recode(adj_noun,
+        "1" = "ADJN", "2" = "NADJ", "3" = "adjNA"),
+        adj_noun = replace_na(adj_noun, "adjNA"),
+        dem_noun = as.character(dem_noun),
+        dem_noun = recode(dem_noun,
+        "1" = "DemN", "2" = "NDem", "3" = "DemSx",
+        "4" = "DemPx", "5" = "DemNDem", "6" = "demmixed"),
+        dem_noun = replace_na(dem_noun, "demNA"),
+        num_noun = as.character(num_noun),
+        num_noun = recode(num_noun,
+        "1" = "NumN", "2" = "NNum", "3" = "numNA", "4" = "numNA"),
+        num_noun = replace_na(num_noun, "numNA"),
+        )
+
+head(d, 10) %>%
+    kable(
+        booktabs = T,
+        caption = "Recoded input data where each column represents a super parameter relating to word order, and each column values is its parameter setting.") %>%
+        kable_styling(latex_options = "HOLD_position")
+```
+
+### More Privots and Recoding
+
+Here, we do some more pivotting and value replacements to get the data into the shape we need it to be. In particular, this means binary column values of either $1$ or $0$, depending on whether the parameter is expressed or not. This also means that, at the end of this process, all parameter settings (as opposed to the parameters themselves) need to be encoded as their own column, hence the pivotting. Unfortunately, there does not seem to be a way to apply `pivot_wider` to multiple columns at once without collapsing them, so we'll chain four pivots to achieve the desired outcome. We are left with the data in Table \ref{tab:pivot-binary}.
+
+```{r pivot-binary}
+d <- d %>%
+    pivot_wider(
+        names_from = "word_order",
+        values_from = "word_order",
+        values_fill = list(word_order = 0)
+        ) %>%
+    pivot_wider(
+        names_from = "adj_noun",
+        values_from = "adj_noun",
+        values_fill = list(adj_noun = 0)
+        ) %>%
+    pivot_wider(
+        names_from = "dem_noun",
+        values_from = "dem_noun",
+        values_fill = list(dem_noun = 0)
+        ) %>%
+    pivot_wider(
+        names_from = "num_noun",
+        values_from = "num_noun",
+        values_fill = list(num_noun = 0)
+        )
+
+d <- d %>%
+    mutate_at(vars(!ends_with("_id")), function(x) as.numeric(x != "0"))
+
+head(d, 10) %>%
+    kable(
+        booktabs = T,
+        caption = "Widened Data containing binary identifiers regarding feature expression."
+        ) %>%
+    kable_styling(latex_options = c("scale_down", "HOLD_position"))
+```
+
+### Add Language Data
+
+Before finally turning our attention towards the actual visualizations, we will perform one (largely optional) step: adding some information about the `r length(d$language_id)` languages whose parameters we're visualizing. This information won't actually be displayed in the set intersetion plots, but I think it makes the final data set more complete, so I'll add it anyway. Plus, it allows us to visualize our language sample on a world map, as you'll see in the next section.
+
+As before, the language information is contained in yet another WALS data set, `languages.csv`. The columns of interest, namely those we will be adding to our reshaped data, are shown in Table \ref{tab:languages}.
+
+```{r languages}
+langs <- "https://raw.githubusercontent.com/cldf-datasets/wals/master/cldf/languages.csv"
+langs <- read.csv(langs) %>%
+    clean_names() %>%
+    select(id, name, latitude, longitude, family, genus) %>%
+    rename(language_id = id)
+
+head(langs, 10) %>%
+    kable(
+        booktabs = T,
+        caption = "Available information about the languages in our data."
+    ) %>%
+        kable_styling(latex_options = "HOLD_position")
+```
+
+After combining the language information with our data, we are left with Table \ref{tab:lang-comb}.
+
+```{r lang-comb}
+d <- d %>%
+    left_join(langs)
+
+head(d, 10) %>%
+    kable(
+        booktabs = T,
+        caption = "Final data including all necessary language information."
+    ) %>%
+    kable_styling(latex_options = c("scale_down", "HOLD_position"))
+```
+
+# Plots
+
+## World Map: sf
+
+Using the *sf* package [@pebesma2018simplefeatures], let's look at what kinds of languages we have data on (and to actually make use of the coordinate information). The output is shown in Figure \ref{fig:world}.
+
+```{r theme, echo=FALSE}
+# nicer plots
+theme_maik <- function() {
+    theme_ipsum_rc() %+replace%
+        theme(
+            legend.key = element_rect(colour = NA),
+            legend.position = "bottom",
+            legend.direction = "horizontal",
+            legend.key.size = unit(0.3, "cm"),
+            legend.margin = margin(0, 0, 0, 0, "cm"),
+            panel.grid.major.x = element_blank(),
+            panel.grid.minor.x = element_blank(),
+            panel.grid.major.y = element_line(colour = "gray"),
+            panel.grid.minor.y = element_line(colour = "gray"),
+            panel.spacing = unit(.5, "lines"),
+            plot.margin = unit(c(.1, .1, .1, .1), "cm"),
+            axis.line = element_line(colour = "gray", size = .5),
+            strip.text.x = element_text(size = 9),
+        ) +
+        theme(
+            axis.title.x = element_text(size = 12),
+            axis.title.y = element_text(size = 12),
+            plot.title = element_text(size = 18),
+            plot.subtitle = element_text(size = 15),
+            plot.caption = element_text(size = 12),
+            strip.text.x = element_text(size = 12),
+            strip.text.y = element_text(size = 12)
+        )
+}
+
+theme_set(theme_maik())
+```
+
+```{r world, fig.cap="Languages considered in our dataset, created with the \\textit{sf} package.", fig.asp = 1}
+world <- ne_countries(
+    scale = "small", returnclass = "sf",
+    continent = c(
+        "africa", "oceania", "asia",
+        "europe", "north america", "south america"
+        )
+    )
+
+ggplot(data = world) +
+    geom_sf(size = .1, fill = "gray95") +
+    geom_point(data = d,
+        aes(x = longitude, y = latitude),
+        size = .5, alpha = .2, color = "#31497E"
+    ) +
+    labs(x = NULL, y = NULL)
+```
+
+## Venn-Diagram 1: venneuler
+
+Let's start with the first Venn/Euler diagram^[See https://en.wikipedia.org/wiki/Euler_diagram for a description of Euler diagrams, as well as differentiation from Venn diagrams.] [using the *venneuler* package, @wilkinson2011venneuler]. Note that in Figure \ref{fig:venn} there does not seem to be a way of using ellipses instead of circles for the shape of the sets, which leads to awkward layout design and loss of intersection information in the present case.
+
+```{r venn, out.width = "40%", fig.cap = "Venn/Euler diagram using \\textit{venneuler} package."}
+sets <- d %>%
+    select(SOV, SVO, OVS, OSV, NADJ, ADJN)
+
+venn <- venneuler(as.data.frame(sets))
+par(cex = .35)
+plot(venn)
+```
+
+## Venn-Diagram 2: eulerr
+
+The second Venn/Euler diagram, Figure \ref{fig:venn-2}, was created with the *eulerr* package [@larsson2020eulerr]. Here, it is possible to use an ellipse as the basic set shape, which allows a more information rich display (note the OVS and OSV overlaps that could not be shown previously).
+
+You may have noticed that I opted for generating a legend as opposed to adding the set names directly within the ellipses. This way done primarily so that as many intersections as possible can be displayed. Of course, this comes at the price of readability. Different from Figure \ref{fig:venn}, the current plot cannot be interpreted as quickly, simply because a legend lookup is required (and, potentially, because my color choice may not be the best one out there). 
+
+```{r venn-2, out.width="70%", fig.asp = 1.3, fig.cap = "Venn/Euler diagram using the \\textit{eulerr} package."}
+plot(euler(
+        as.data.frame(sets), shape = "ellipse"
+        ),
+    quantities = list(
+        type = "counts", fontsize = 8, font = 3
+        ),
+    edges = list(col = "white", lex = .5, lty = 3),
+    fills = scico::scico(6, palette = "acton", begin = .2),
+    legend = list(TRUE, fontsize = 11)
+)
+```
+
+The alternative, with the set names noted within the sets themselves, is shown in Figure \ref{fig:venn-3}. As before, while the larger sets are unaffected by this choice, the results for the smaller ones, OVS and OSV, are quite different. 
+
+As I hope to have demonstrated in detail, Venn/Euler diagrams, especially when considering a larger number of sets with varying sizes, may not be the best choice for set intersection visualizations, despite most people's familiarity with them. 
+
+```{r venn-3, out.width="70%", fig.asp = 1.3, fig.cap = "Venn/Euler diagram using the \\textit{eulerr} package."}
+plot(euler(
+        as.data.frame(sets), shape = "ellipse"
+        ),
+    quantities = list(
+        type = "counts", fontsize = 8, font = 3
+        ),
+    edges = list(col = "white", lex = .5, lty = 3),
+    fills = scico::scico(6, palette = "acton", begin = .2)
+)
+```
+
+## Up Set Plot: UpSetR
+
+Finally, to overcome some of the problems we encountered with Venn/Euler diagrams, we have the up set visualization in Figure \ref{fig:upset-extended}, created with the *UpSetR* package [@gehlenborg2019UpSetR; see also @lex2014sets]. Here, because the basic type of plot is a bar diagram, all intersections can be displayed without needing to be concerned about the geometric shape of the sets as either ellipses or circles. This also allows for the inclusion of two other parameters: ordering of demonstratives with respect to the noun as well as numeral positioning. 
+
+```{r upset-extended, fig.cap = "UpSet diagram representing the dependencies between constituent orders; created using the \\textit{UpSetR} package. The differently colored bar is simply there for code illustration purposes and can be ignored."}
+vars <- c(
+    "SOV", "SVO", "VOS", "VSO", "OVS", "OSV",
+    "NADJ", "ADJN", "NDem", "DemN", "NNum", "NumN"
+)
+
+upset(
+    as.data.frame(d),
+    sets = vars,
+    order.by = c("freq"),
+    keep.order = TRUE,
+    mainbar.y.label = "Word Order and Adjective Placement Dependencies",
+    sets.x.label = "Number of Languages",
+    mb.ratio = c(0.6, 0.4),
+    queries = list(
+        list(
+            query = intersects,
+            params = list("SOV", "NADJ"),
+            color = "#1F7A80FF",
+            active = T
+        )
+    ),
+    text.scale = .75,
+    shade.color = "#B2D2DEFF",
+    main.bar.color = "#64A6BDFF",
+    matrix.color = "#B1B8CA",
+    sets.bar.color = "#F4CAE0FF"
+)
+```
+
+For comparison, Figure \ref{fig:upset-standard} is the up set version of the Venn/Euler diagrams (i.e., exculding demonstrative and numeral position). 
+
+```{r upset-standard, fig.cap = "Up Set diagram using the same sets as the Venn/Euler diagrams."}
+upset(
+    as.data.frame(d),
+    sets = vars[1:8],
+    order.by = c("freq"),
+    keep.order = TRUE,
+    mainbar.y.label = "Word Order and Adjective Placement Dependencies",
+    sets.x.label = "Number of Languages",
+    text.scale = .75,
+    shade.color = "#B2D2DEFF",
+    main.bar.color = "#64A6BDFF",
+    matrix.color = "#B1B8CA",
+    sets.bar.color = "#F4CAE0FF"
+)
+```
+
+\printbibliography[heading=bibintoc]
+
+\appendix
+
+# Session Info
+
+```{r session}
+xfun::session_info(dependencies = FALSE)
+```
