@@ -1,6 +1,6 @@
 # Trying Out UpSet Plots With WALS
 
-For this little project, I wanted to put upset plots to the test. To do that, I chose to work with word order patterns for various languages as collected in the [World Atlas of Language Structures (WALS)](https://wals.info). I am pretty pleased with the outcome and hope to get a change to work with upset-compliant data again in the future, so I am sharing the outcome here. Below is an example:
+For this little project, I wanted to put upset plots to the test. To do that, I chose to work with word order patterns for various languages as collected in the [World Atlas of Language Structures (WALS)](https://wals.info). I am pretty pleased with the outcome and hope to get a chance to work with upset-compliant data again in the future, so I am sharing the outcome here. Below is an example:
 
 <p align="center">
 <img src="https://github.com/mkthalmann/WALS-upsets/blob/master/figs/example.png">
